@@ -18,9 +18,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   detect:
     runs-on: ubuntu-latest
@@ -34,10 +31,16 @@ jobs:
       - id: pick
         env:
           VERSION_INPUT: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           tag="$VERSION_INPUT"
-          if [ -z "$tag" ]; then
+          if [ -n "$tag" ]; then
+            case "$tag" in release-*) ;; *) tag="release-$tag" ;; esac
+            if ! printf '%s' "$tag" | grep -Eq '^release-[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "invalid version: $tag" >&2; exit 1
+            fi
+          else
             tag=$(go run ./tools/update -newer)   # prints the latest tag only if newer than the pinned one
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -53,7 +56,10 @@ jobs:
         with:
           go-version-file: go.mod
       - name: extract Windows and macOS libraries
-        run: go run ./tools/update -version "${{ needs.detect.outputs.tag }}" -os windows,darwin
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./tools/update -version "$TAG" -os windows,darwin
       - uses: actions/upload-artifact@v4
         with:
           name: darwin-windows
@@ -79,8 +85,11 @@ jobs:
       - name: install cmake and ninja
         run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build
       - name: build the Linux libraries with zig
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash tools/linux/build.sh "${{ needs.detect.outputs.tag }}" "$RUNNER_TEMP/linux-out"
+          bash tools/linux/build.sh "$TAG" "$RUNNER_TEMP/linux-out"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -106,7 +115,10 @@ jobs:
           name: linux
           path: ${{ runner.temp }}/linux-out
       - name: merge Linux libraries
-        run: go run ./tools/update -version "${{ needs.detect.outputs.tag }}" -os linux -linux-dir "$RUNNER_TEMP/linux-out"
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./tools/update -version "$TAG" -os linux -linux-dir "$RUNNER_TEMP/linux-out"
       - name: verify
         run: |
           go run ./tools/update -check

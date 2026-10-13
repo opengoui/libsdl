@@ -28,6 +28,11 @@ OUTDIR=${2:?usage: build.sh <version> <outdir>}
 TAG=$VERSION
 case $TAG in release-*) ;; *) TAG=release-$TAG ;; esac
 VER=${TAG#release-}
+case $TAG in
+  release-[0-9]*.[0-9]*.[0-9]*) ;;
+  *) echo "invalid release tag: $TAG" >&2; exit 2 ;;
+esac
+case $TAG in *[!A-Za-z0-9.-]*) echo "invalid release tag: $TAG" >&2; exit 2 ;; esac
 
 # Pinned multi-arch index digest of debian:trixie-slim (verified 2026-10-13).
 DEBIAN_IMAGE='debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f'
@@ -109,7 +114,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 # Never pick anything from the host.
 set(CMAKE_IGNORE_PREFIX_PATH /opt/homebrew /usr/local /opt/local)
-set(CMAKE_C_FLAGS_INIT "-isystem ${SYSROOT}/usr/include -isystem ${SYSROOT}/usr/include/${ARCH}-linux-gnu")
+set(CMAKE_C_FLAGS_INIT "-isystem ${SYSROOT}/usr/include -isystem ${SYSROOT}/usr/include/${ARCH}-linux-gnu -ffile-prefix-map=${SYSROOT}=/sysroot -fdebug-prefix-map=${SYSROOT}=/sysroot")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "-L${SYSROOT}/usr/lib/${ARCH}-linux-gnu")
 TOOLCHAIN
 

@@ -26,6 +26,7 @@ jobs:
           repository: opengoui/puresdl
           path: puresdl
           token: ${{ secrets.PURESDL_TOKEN || github.token }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: libsdl/go.mod
@@ -62,6 +63,7 @@ jobs:
           repository: opengoui/puresdl
           path: puresdl
           token: ${{ secrets.PURESDL_TOKEN || github.token }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: libsdl/go.mod

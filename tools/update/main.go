@@ -100,6 +100,9 @@ func update(o options) error {
 		}
 	}
 	tag = "release-" + manifest.VersionOfTag(tag)
+	if !manifest.ValidTag(tag) {
+		return fmt.Errorf("invalid release tag %q (want release-X.Y.Z)", tag)
+	}
 	version := manifest.VersionOfTag(tag)
 	fmt.Println("pinning", tag)
 

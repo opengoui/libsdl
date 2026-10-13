@@ -339,3 +339,9 @@ func Check(root string) error {
 	}
 	return errors.Join(errs...)
 }
+
+// tagPattern matches the release tags of libsdl-org/SDL that are accepted.
+var tagPattern = regexp.MustCompile(`^release-[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ValidTag reports whether tag has the form release-X.Y.Z.
+func ValidTag(tag string) bool { return tagPattern.MatchString(tag) }
