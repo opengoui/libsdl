@@ -1,0 +1,130 @@
+name: update
+
+# Pins the newest libsdl-org/SDL release. Windows and macOS libraries are
+# extracted from the official release assets on a macOS runner (hdiutil, lipo,
+# codesign); Linux libraries are built from source with zig in a Linux job;
+# a last job merges both and opens a pull request.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag or version to pin (empty: latest release)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: pick
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -e
+          tag="$VERSION_INPUT"
+          if [ -z "$tag" ]; then
+            tag=$(go run ./tools/update -newer)   # prints the latest tag only if newer than the pinned one
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "target release: ${tag:-none (up to date)}"
+
+  macos:
+    needs: detect
+    if: needs.detect.outputs.tag != ''
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: extract Windows and macOS libraries
+        run: go run ./tools/update -version "${{ needs.detect.outputs.tag }}" -os windows,darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-windows
+          path: |
+            assets
+            binary_*.go
+            libsdl.go
+            LICENSE-SDL
+
+  linux:
+    needs: detect
+    if: needs.detect.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - uses: docker/setup-qemu-action@v3
+      - name: install cmake and ninja
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build
+      - name: build the Linux libraries with zig
+        run: |
+          bash tools/linux/build.sh "${{ needs.detect.outputs.tag }}" "$RUNNER_TEMP/linux-out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: ${{ runner.temp }}/linux-out
+
+  pull-request:
+    needs: [detect, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: darwin-windows
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: ${{ runner.temp }}/linux-out
+      - name: merge Linux libraries
+        run: go run ./tools/update -version "${{ needs.detect.outputs.tag }}" -os linux -linux-dir "$RUNNER_TEMP/linux-out"
+      - name: verify
+        run: |
+          go run ./tools/update -check
+          go vet ./...
+          go test ./... -count=1
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: update/${{ needs.detect.outputs.tag }}
+          commit-message: "feat(assets): update SDL3 to ${{ needs.detect.outputs.tag }}"
+          title: "Update SDL3 to ${{ needs.detect.outputs.tag }}"
+          body: |
+            Automated update to https://github.com/libsdl-org/SDL/releases/tag/${{ needs.detect.outputs.tag }}.
+
+            - Windows and macOS libraries: extracted from the official release assets (digest verified).
+            - Linux libraries: built from source with zig by `tools/linux/build.sh`.
+            - `assets/MANIFEST.json` lists every hash; `go run ./tools/update -check` passes.
+          add-paths: |
+            assets
+            binary_*.go
+            libsdl.go
+            LICENSE-SDL

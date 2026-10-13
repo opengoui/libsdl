@@ -1,0 +1,104 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: libsdl
+      # The integration test builds a probe against puresdl, a sibling checkout.
+      - uses: actions/checkout@v4
+        with:
+          repository: opengoui/puresdl
+          path: puresdl
+          token: ${{ secrets.PURESDL_TOKEN || github.token }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: libsdl/go.mod
+          cache-dependency-path: libsdl/go.mod
+      - name: build
+        working-directory: libsdl
+        run: go build ./...
+      - name: vet
+        working-directory: libsdl
+        run: go vet ./...
+      - name: assets match MANIFEST.json
+        working-directory: libsdl
+        run: go run ./tools/update -check
+      - name: test
+        working-directory: libsdl
+        env:
+          LIBSDL_PURESDL_DIR: ${{ github.workspace }}/puresdl
+          CGO_ENABLED: "0"
+        run: go test ./... -count=1 -v
+
+  linux-docker:
+    name: linux libraries in docker (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: libsdl
+      - uses: actions/checkout@v4
+        with:
+          repository: opengoui/puresdl
+          path: puresdl
+          token: ${{ secrets.PURESDL_TOKEN || github.token }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: libsdl/go.mod
+          cache-dependency-path: libsdl/go.mod
+      - uses: docker/setup-qemu-action@v3
+      - name: load ${{ matrix.arch }} library in a debian container
+        working-directory: libsdl
+        env:
+          LIBSDL_PURESDL_DIR: ${{ github.workspace }}/puresdl
+          LIBSDL_DOCKER: "1"
+        run: go test . -run 'TestLoadLinuxInDocker/${{ matrix.arch }}' -count=1 -v
+
+  cross-compile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libsdl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: libsdl
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: libsdl/go.mod
+          cache-dependency-path: libsdl/go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go mod tidy
+        run: go mod tidy -diff
+      - name: build and vet every target
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -e
+          for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 \
+                   linux/386 js/wasm freebsd/amd64; do
+            echo "== $t"
+            GOOS=${t%/*} GOARCH=${t#*/} go build ./...
+            GOOS=${t%/*} GOARCH=${t#*/} go vet ./...
+          done
