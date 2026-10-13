@@ -21,7 +21,10 @@ import (
 
 // Target is one supported GOOS/GOARCH pair.
 type Target struct {
-	OS, Arch string
+	// OS is the target operating system name, such as "linux".
+	OS string
+	// Arch is the target architecture name, such as "amd64".
+	Arch string
 	// LibName is the file name the library is extracted as.
 	LibName string
 	// Tag is the //go:build expression selecting the platform.
@@ -50,22 +53,33 @@ const ManifestPath = "assets/MANIFEST.json"
 // File describes one embedded library. It deliberately holds no dates so
 // that regenerating an unchanged release yields an identical manifest.
 type File struct {
-	OS      string `json:"os"`
-	Arch    string `json:"arch"`
-	Asset   string `json:"asset"`   // path of the gzip file, relative to the module root
-	LibName string `json:"libName"` // extraction file name
-	Origin  string `json:"origin"`  // OriginOfficial or OriginZig
-	// Source is the URL the library was taken from, or a description of how
-	// it was built. SourceSHA256 is the hash of the downloaded archive
-	// (zip, dmg or source tarball).
-	Source       string `json:"source"`
+	// OS is the target operating system name.
+	OS string `json:"os"`
+	// Arch is the target architecture name.
+	Arch string `json:"arch"`
+	// Asset is the gzip file path relative to the module root.
+	Asset string `json:"asset"`
+	// LibName is the file name used when the library is extracted.
+	LibName string `json:"libName"`
+	// Origin identifies how the library was obtained: OriginOfficial or OriginZig.
+	Origin string `json:"origin"`
+	// Source is the URL the library was taken from, or a description of how it
+	// was built.
+	Source string `json:"source"`
+	// SourceSHA256 is the lowercase hexadecimal SHA-256 of the source archive.
 	SourceSHA256 string `json:"sourceSha256,omitempty"`
-	SDLVersion   string `json:"sdlVersion"`
-	Size         int64  `json:"size"`   // decompressed library
-	SHA256       string `json:"sha256"` // decompressed library
-	GzSize       int64  `json:"gzSize"`
-	GzSHA256     string `json:"gzSha256"`
-	Notes        string `json:"notes,omitempty"`
+	// SDLVersion is the upstream SDL release version.
+	SDLVersion string `json:"sdlVersion"`
+	// Size is the uncompressed library size in bytes.
+	Size int64 `json:"size"`
+	// SHA256 is the lowercase hexadecimal SHA-256 of the uncompressed library.
+	SHA256 string `json:"sha256"`
+	// GzSize is the compressed asset size in bytes.
+	GzSize int64 `json:"gzSize"`
+	// GzSHA256 is the lowercase hexadecimal SHA-256 of the compressed asset.
+	GzSHA256 string `json:"gzSha256"`
+	// Notes contains optional details about the library build or source.
+	Notes string `json:"notes,omitempty"`
 }
 
 // Manifest is the content of assets/MANIFEST.json.
@@ -74,7 +88,8 @@ type Manifest struct {
 	Tag string `json:"tag"`
 	// Version is Tag without the "release-" prefix.
 	Version string `json:"version"`
-	Files   []File `json:"files"`
+	// Files lists the embedded libraries for the supported platforms.
+	Files []File `json:"files"`
 }
 
 // Load reads the manifest below root.

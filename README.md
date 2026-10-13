@@ -1,154 +1,131 @@
 # libsdl
 
-`github.com/opengoui/libsdl` 把 **SDL3 官方发行版的共享库**以 gzip 压缩后用 `go:embed` 嵌入 Go 模块，
-按 `GOOS/GOARCH` 选择，需要时**释放到磁盘**（自定义目录或系统临时目录），返回路径供 purego 系绑定
-（例如同级模块 [puresdl](../puresdl)）加载。无需 cgo，无需用户预装 SDL3。根模块没有任何依赖。
+`github.com/opengoui/libsdl` embeds gzip-compressed shared libraries from the official SDL3 release in a Go module using `go:embed`. It selects the library for the current `GOOS/GOARCH`, extracts it to disk when needed (to a custom directory or the system temporary directory), and returns its path for a purego-based binding such as the sibling module [puresdl](../puresdl) to load. No cgo or preinstalled SDL3 is required. The root module has no dependencies.
 
-当前固定版本：**SDL 3.4.18**（上游标签 `release-3.4.18`），见 `libsdl.Version` 与 `assets/MANIFEST.json`。
+Pinned SDL version: **3.4.18** (upstream tag `release-3.4.18`); see `libsdl.Version` and `assets/MANIFEST.json`.
 
-## 使用：两种方式
+## Usage
 
-### 1. `load.Load`（推荐）
+### 1. `load.Load` (recommended)
 
-嵌套模块 `github.com/opengoui/libsdl/load`（位于 `load/`，有自己的 `go.mod`，依赖 libsdl 与 puresdl）：
+The nested module `github.com/opengoui/libsdl/load` (in `load/`) has its own `go.mod` and depends on libsdl and puresdl:
 
 ```go
 import "github.com/opengoui/libsdl/load"
 
-path, err := load.Load("/opt/myapp/lib") // 自定义目录
-path, err := load.Load()                 // 不带参数：LIBSDL_DIR，否则系统临时目录
+path, err := load.Load("/opt/myapp/lib") // Use a custom directory
+path, err := load.Load()                 // Uses LIBSDL_DIR, or the system temp directory
 ```
 
-`Load` 先 `libsdl.Extract(dir)` 释放库，再调用 puresdl 的 `sdl.Load(path)`；如果之后 `sdl.LoadedPath()` 不等于该路径
-（实际绑定的不是刚释放的库）就返回错误。puresdl 在 `import` 时可能已经加载了系统库（如 Homebrew），
-`sdl.Load(path)` 会切换到新路径并重新绑定全部函数，所以**不依赖包初始化顺序**；必须在使用 SDL 之前调用。
-macOS 上若已经映射了另一份 SDL3，切换后两份镜像同时存在，Objective-C 运行时会打印
-`Class ... is implemented in both ...` 警告；想避免就用方式 2，或在进程启动前设置 `SDL3_LIBRARY`。
-Windows 上同名 `SDL3.dll` 若已加载，系统加载器可能直接返回已加载的模块，应让 `Load` 先于其它加载。
+`Load` first extracts the library with `libsdl.Extract`, then calls `sdl.Load(path)` from puresdl. It returns an error if `sdl.LoadedPath()` does not match the extracted path (meaning a different library was actually bound). puresdl may have loaded a system library, such as one installed by Homebrew, during package initialization. `sdl.Load(path)` switches to the new path and rebinds all functions, so this does not depend on package initialization order. Call `Load` before using SDL. On macOS, if another SDL3 copy has already been mapped, both copies remain in the process and the Objective-C runtime prints a `Class ... is implemented in both ...` warning. To avoid this, use method 2 or set `SDL3_LIBRARY` before starting the process. On Windows, if an `SDL3.dll` with the same name is already loaded, the system loader may return that module; call `Load` before anything else loads SDL.
 
-`load/go.mod` 里的 `replace github.com/opengoui/libsdl => ../` 与 `replace github.com/opengoui/puresdl => ../../puresdl`
-只是**开发期**写法（三个仓库并排检出）；发布时应删除并改为引用带标签的版本（包括 `load/vX.Y.Z` 标签）。
-Go 会忽略依赖模块里的 `replace`，所以在发布前，使用方模块必须自己重复这三条 `replace`
-（`libsdl`、`libsdl/load`、`puresdl`，指向本地检出），或使用 `go.work` 文件，否则 `go get github.com/opengoui/libsdl/load` 无法解析 `v0.0.0`。
+The `replace` directives in `load/go.mod` for `github.com/opengoui/libsdl => ../` and `github.com/opengoui/puresdl => ../../puresdl` are for local development with all three repositories checked out side by side. Remove them and use tagged versions when publishing (including a `load/vX.Y.Z` tag). Go ignores `replace` directives in dependency modules. Before publication, a consuming module must therefore either add its own `replace` directives for `libsdl`, `libsdl/load`, and `puresdl` pointing to local checkouts, or use a `go.work` file; otherwise `go get github.com/opengoui/libsdl/load` cannot resolve `v0.0.0`.
 
-### 2. 手动 `Extract` + `sdl.Load`
+### 2. `Extract` manually, then call `sdl.Load`
 
 ```go
-path, err := libsdl.Extract("/opt/myapp/lib") // dir == "" 用 LIBSDL_DIR 或临时目录；等价于 libsdl.Path()
+path, err := libsdl.Extract("/opt/myapp/lib") // With an empty dir, uses LIBSDL_DIR or the temp directory; equivalent to libsdl.Path()
 if err != nil { return err }
-err = sdl.Load(path)                          // 需要支持切换的 puresdl（见下）
+err = sdl.Load(path)                          // Requires a puresdl version that supports switching (see below)
 ```
 
-不受支持的平台上 `errors.Is(err, errors.ErrUnsupported)`。`libsdl.Info()` 不做 I/O，返回当前平台库的名称、大小与 SHA-256。
+On unsupported platforms, `errors.Is(err, errors.ErrUnsupported)` is true. `libsdl.Info()` performs no I/O and returns the current platform library's name, size, and SHA-256 hash.
 
-### 释放策略
+### Extraction behavior
 
-API：`Extract(dir string) (string, error)`（并发安全，每个绝对目录记忆一次成功结果（命中时会重新检查文件仍存在且大小一致，否则重新校验/释放），错误不记忆）、
-`Path()`（等价于 `Extract("")`）、`Info()`、`Version`、`Library`、常量 `DirEnv = "LIBSDL_DIR"`。
-库名为 `libSDL3.so.0`、`libSDL3.dylib`、`SDL3.dll`。
+API: `Extract(dir string) (string, error)` (safe for concurrent use; remembers one successful result per absolute directory and verifies that the file still exists with the expected size before reusing it; failures are not cached), `Path()` (equivalent to `Extract("")`), `Info()`, `Version`, `Library`, and `DirEnv = "LIBSDL_DIR"`.
 
-**自定义目录**（`Extract(dir)` 的参数，或 `dir == ""` 时的环境变量 `LIBSDL_DIR`；显式参数优先）：
+The library filenames are `libSDL3.so.0`, `libSDL3.dylib`, and `SDL3.dll`.
 
-- 目录不存在则 `MkdirAll(0755)`；无法创建或不可写直接报错，**不会回退到别处**。相对路径会转为绝对路径；以 `~` 开头的路径**不会**展开，直接报错。
-- 目标 `<dir>/<库名>` 是**普通文件**且大小与 SHA-256 都等于内嵌库时原样复用（不改 inode 与 mtime）；
-  缺失、截断、内容不同、符号链接等都会重写：先在同目录写临时文件（0755），再 `rename` 覆盖，因此读者不会看到半成品，
-  符号链接被替换为普通文件而**不会写穿**到链接目标；目标是目录则报错。出错时不留临时文件，
-  同目录里属于本库的、超过 1 小时的残留 `*.tmp` 在每次释放（包括复用现有文件时）都会被清理，其它文件不动。
-- **不做属主/权限检查**：用户选择的目录（例如可执行文件旁的共享安装目录）完全合法。代价是哈希校验只防损坏，
-  不防能写该目录的恶意进程，请选择只有自己能写的目录。
-- Windows：已加载的 DLL 无法被替换。若文件内容不同且正被使用，`rename` 失败，返回明确说明"可能被运行中的进程加载"的错误
-  （不会等待、不会删除）；内容一致则照常复用，即使 DLL 正被本进程或其它进程加载。
+**Custom directory** (the `Extract` argument, or `LIBSDL_DIR` when `dir == ""`; an explicit argument takes precedence):
 
-**默认目录**（不指定、也没有 `LIBSDL_DIR`）：
+- If the directory does not exist, it is created with `MkdirAll(0755)`. Failure to create or write to it returns an error; extraction does not fall back to another location. Relative paths are converted to absolute paths. Paths beginning with `~` are not expanded and are rejected.
+- An existing target `<dir>/<library name>` is reused untouched if it is a regular file whose size and SHA-256 match the embedded library (its inode and mtime are preserved). A missing, truncated, modified, or symlink target is replaced. Replacement writes a temporary file in the same directory with mode `0755`, then renames it into place. Readers never see a partial file, and a symlink is replaced rather than followed. A directory at the target path is an error. Failed extraction leaves no temporary file. On every extraction, including when reusing an existing file, stale `*.tmp` files belonging to this library and older than one hour are cleaned up; other files are left alone.
+- Ownership and permissions are not checked for a user-selected directory, so a shared install location (for example, next to an executable) is valid. The hash check protects against corruption, not a malicious process that can write to the directory. Choose a directory only you can write to.
+- On Windows, a loaded DLL cannot be replaced. If its contents differ while it is in use, `rename` fails and returns an error explaining that a running process may have loaded it; extraction does not wait or delete the file. A matching file is reused even if it is loaded by this or another process.
 
-- `os.TempDir()/libsdl-<uid>-<版本>-<sha256 前 16 位>/<库名>`（Windows 上 `<uid>` 为 `user`，临时目录本身是每用户的）。
-  名称是确定的，所以多次运行与并发进程复用同一份。
-- 沿用严格检查：目录必须是真实目录（符号链接被拒绝）、属主为当前用户（权限过宽时 chmod 0700），已有文件必须是属主为当前用户、
-  其他用户不可写的普通文件且大小与哈希匹配，否则替换；属于他人的目录会报错。已不再使用 `os.UserCacheDir`。
-- 临时目录**不会被自动清理**；每个版本最多留下一个约几 MB 的目录。
+**Default directory** (when no directory is specified and `LIBSDL_DIR` is unset):
 
-内嵌数据与记录的哈希不符时直接报错。
+- `os.TempDir()/libsdl-<uid>-<version>-<first 16 characters of sha256>/<library name>` (`<uid>` is `user` on Windows, where the temp directory is already per-user). The deterministic name lets repeated runs and concurrent processes reuse the same copy.
+- The directory must be a real directory (symlinks are rejected) owned by the current user. If its permissions are too broad, they are changed to `0700`. An existing library file must be a regular file owned by the current user, not writable by other users, and match the expected size and hash; otherwise it is replaced. A directory owned by someone else causes an error. `os.UserCacheDir` is not used.
+- The temporary directory is not cleaned up automatically. Each version leaves at most one directory of a few megabytes.
 
-### puresdl 的 `Load` 切换
+An embedded library whose data does not match its recorded hash causes an error.
 
-`sdl.Load(path)`（非空路径）在已加载另一份库时会打开新路径、重新绑定全部函数并更新 `sdl.LoadedPath()`；相同路径是空操作，
-路径无法打开、或打开的文件不是 SDL3（找不到 `SDL_GetVersion`）时返回错误且旧库继续可用。切换不能与 SDL 调用并发。
+### Switching libraries with puresdl `Load`
 
-## 平台与来源
+`sdl.Load(path)` with a non-empty path opens the new library, rebinds all functions, and updates `sdl.LoadedPath()` even if another library is already loaded. The same path is a no-op. If the path cannot be opened or the file is not SDL3 (it does not provide `SDL_GetVersion`), `Load` returns an error and the old library remains usable. Do not switch libraries concurrently with SDL calls.
 
-| 平台 | 来源 | 说明 |
+## Platforms and sources
+
+| Platform | Source | Notes |
 |---|---|---|
-| windows/amd64、windows/arm64 | **官方发行版** `SDL3-<ver>-win32-{x64,arm64}.zip` 中的 `SDL3.dll` | 按 GitHub 公布的 asset digest 校验 zip；PE machine 校验；上游 DLL 无 Authenticode 签名；只依赖系统 DLL |
-| darwin/amd64、darwin/arm64 | **官方发行版** `SDL3-<ver>.dmg`（`hdiutil` 挂载，`lipo -thin` 取出 xcframework 中的 macOS 切片，`codesign --force -s -` 重新 ad-hoc 签名） | 最低系统：arm64 为 macOS 11.0，x86_64 为 10.13（Go 本身要求 macOS 12+）；ad-hoc 签名对 `dlopen` 足够，arm64 切片**必须保留签名**，否则内核拒绝加载 |
-| linux/amd64、linux/arm64 | **自行用 zig 从源码构建**（官方不发布 Linux 二进制） | glibc 下限 **2.17**；SONAME `libSDL3.so.0`；仅 NEEDED libc/libm/libdl/libpthread，所有后端（X11、Wayland、KMSDRM、libdecor、ALSA、PulseAudio、PipeWire、JACK、sndio、udev、dbus 等）运行时 `dlopen`；已 strip，无 RPATH |
+| windows/amd64, windows/arm64 | `SDL3-<ver>-win32-{x64,arm64}.zip` from the **official release**, containing `SDL3.dll` | The zip is checked against the asset digest published by GitHub; the PE machine type is verified. The upstream DLL has no Authenticode signature and depends only on system DLLs. |
+| darwin/amd64, darwin/arm64 | `SDL3-<ver>.dmg` from the **official release** (`hdiutil` mounts it, `lipo -thin` extracts the macOS slice from the xcframework, and `codesign --force -s -` applies an ad hoc signature) | Minimum OS: macOS 11.0 for arm64 and 10.13 for x86_64 (Go itself requires macOS 12 or later). An ad hoc signature is sufficient for `dlopen`; the arm64 slice must remain signed or the kernel will refuse to load it. |
+| linux/amd64, linux/arm64 | **Built from source with zig** (the official project does not publish Linux binaries) | glibc minimum: **2.17**; SONAME: `libSDL3.so.0`. The only `NEEDED` libraries are libc, libm, libdl, and libpthread. All backends (X11, Wayland, KMSDRM, libdecor, ALSA, PulseAudio, PipeWire, JACK, sndio, udev, dbus, and others) are loaded with `dlopen` at runtime. The library is stripped and has no RPATH. |
 
-其它平台（`linux/386`、`js/wasm`、`android`、`ios`、`freebsd` 等）能编译，但 `Extract()`/`Path()` 返回 `errors.ErrUnsupported`。
+Other platforms (`linux/386`, `js/wasm`, `android`, `ios`, `freebsd`, and others) can compile, but `Extract()` and `Path()` return errors matching `errors.ErrUnsupported`.
 
-Linux 构建细节见 `tools/linux/build.sh`：zig 0.17（`-target <arch>-linux-gnu.2.17`）作交叉编译器；
-头文件与 `.pc` 来自按 digest 固定的 `debian:trixie-slim` 镜像在 docker 中安装的 `-dev` 包（可选 `DEBIAN_SNAPSHOT` 冻结 apt）；
-`wayland-scanner` 与 GNU strip 也在该镜像内运行；源码取自 `archive/refs/tags/<tag>.tar.gz`，其 sha256 写入 `MANIFEST.json`。
-同一输入两次构建的结果逐位一致。库的 `SDL_GetRevision()` 为 `SDL-release-<ver> (libsdl zig build)`，可据此与官方构建区分。
-未验证项：真实 X11/Wayland 会话、音频设备（仅用 dummy 驱动与驱动列表发现测试）。
+Linux build details are in `tools/linux/build.sh`. It uses zig 0.17 as a cross-compiler with `-target <arch>-linux-gnu.2.17`. Headers and `.pc` files come from `-dev` packages installed in a digest-pinned `debian:trixie-slim` Docker image (set `DEBIAN_SNAPSHOT` to freeze apt if desired). `wayland-scanner` and GNU strip also run in that image. SDL source is fetched from `archive/refs/tags/<tag>.tar.gz`; its SHA-256 is recorded in `MANIFEST.json`. Rebuilding with the same inputs produces byte-identical output. The library's `SDL_GetRevision()` is `SDL-release-<ver> (libsdl zig build)`, which distinguishes it from an official build.
 
-## 文件布局
+Not verified: a real X11 or Wayland session, or audio devices (only the dummy driver and driver-list discovery have been tested).
 
-```
-libsdl.go                 文档、Version 常量、Library/Info/Extract/Path
-extract.go                释放与校验（原子写入、并发安全）
-load/                     嵌套模块：Load(dir...) = Extract + puresdl 的 sdl.Load
-binary_<os>_<arch>.go     6 个，由 tools/update 生成，go:embed 各自的 assets/sdl_<os>_<arch>.gz
-binary_unsupported.go     其它平台的占位
-assets/sdl_*.gz           6 个压缩库
-assets/MANIFEST.json      每个库的来源、SDL 版本、原始/压缩 sha256 与大小（不含日期，可复现）
-LICENSE-SDL               SDL 的 zlib 许可证（取自发行版）
-tools/update              更新程序（Go）
-tools/linux/build.sh      Linux 库的 zig 构建脚本
-internal/manifest         清单读写与校验（tools/update 与测试共用）
-testdata/probe            集成测试用的探针程序（依赖 puresdl，不属于本模块构建）
+## File layout
+
+```text
+libsdl.go                 Package docs, Version, Library/Info/Extract/Path
+extract.go                Extraction and verification (atomic writes, concurrency-safe)
+load/                     Nested module: Load(dir...) = Extract + puresdl sdl.Load
+binary_<os>_<arch>.go     Six generated files; go:embed the matching assets/sdl_<os>_<arch>.gz
+binary_unsupported.go     Placeholder for other platforms
+assets/sdl_*.gz           Six compressed libraries
+assets/MANIFEST.json      Source, SDL version, original/compressed SHA-256 and size for each library (no dates, reproducible)
+LICENSE-SDL               SDL zlib license from the release
+tools/update              Update program (Go)
+tools/linux/build.sh      Zig build script for Linux libraries
+internal/manifest         Manifest reading, writing, and validation (shared by tools/update and tests)
+testdata/probe            Probe program for integration tests; depends on puresdl and is not part of this module's build
 ```
 
-## 更新到新版本
+## Updating to a new version
 
-前置条件：
+Prerequisites for a full update:
 
-- 完整更新需要 **macOS 主机**（`hdiutil`、`lipo`、`codesign`）、`zig` 0.17、`cmake`、`ninja`、`docker`、`curl`/`tar`、Go。
-- 仅 Windows 部分只需 Go 与网络；`GITHUB_TOKEN`（可选）用于提高 API 限额。
+- A macOS host (`hdiutil`, `lipo`, and `codesign`), zig 0.17, `cmake`, `ninja`, `docker`, `curl`/`tar`, and Go.
+- For Windows-only updates, Go and network access are sufficient. `GITHUB_TOKEN` is optional and raises the API rate limit.
 
 ```sh
-go run ./tools/update -latest                    # 固定到最新正式发行版（全部 6 个库）
-go run ./tools/update -version release-3.4.18    # 或指定版本（"3.4.18" 亦可）
-go run ./tools/update -newer                     # 若最新版本比当前新则打印标签（供 CI 使用）
-go run ./tools/update -check                     # 离线校验 assets 与 MANIFEST.json
+go run ./tools/update -latest                    # Pin the latest stable release (all six libraries)
+go run ./tools/update -version release-3.4.18    # Or specify a version ("3.4.18" also works)
+go run ./tools/update -newer                     # Print the tag if the latest release is newer (for CI)
+go run ./tools/update -check                     # Validate assets and MANIFEST.json offline
 ```
 
-可用 `-os windows,darwin,linux` 只更新部分平台（CI 里 macOS 与 Linux 分开 job 运行），
-`-linux-dir <目录>` 直接使用已有的 `SDL3_linux_{amd64,arm64}.so` 与 `build-report.txt` 而不重新构建。
-部分更新会留下版本混合的清单，`-check` 会报错，直到所有平台都更新。
-更新程序会重写 `assets/*.gz`、`assets/MANIFEST.json`、`binary_*.go`、`libsdl.go` 里的 `Version` 与 `LICENSE-SDL`。
-更新后跑 `go test ./... -count=1` 并提交。
+Use `-os windows,darwin,linux` to update only selected platforms (CI runs macOS and Linux in separate jobs), or `-linux-dir <directory>` to use existing `SDL3_linux_{amd64,arm64}.so` files and `build-report.txt` without rebuilding. A partial update leaves mixed versions in the manifest, and `-check` reports an error until every platform is updated.
 
-`.github/workflows/update.yml` 每周（及手动）检查新版本：macOS job 提取 Windows/macOS，Linux job 用 zig 构建，
-最后一个 job 合并并通过 PR 提交。
+The updater rewrites `assets/*.gz`, `assets/MANIFEST.json`, `binary_*.go`, the `Version` in `libsdl.go`, and `LICENSE-SDL`. After updating, run `go test ./... -count=1` and commit the changes.
 
-## 验证
+`.github/workflows/update.yml` checks for new versions weekly and on demand. The macOS job extracts Windows and macOS libraries; the Linux job builds with zig; a final job combines the results and opens a pull request.
+
+## Verification
 
 ```sh
-go run ./tools/update -check      # 离线：gzip/原始哈希、可执行头（ELF/Mach-O/PE 与架构）、生成文件与 Version 同步
-go test ./... -count=1            # 单元测试（根模块，不含 load/）
-(cd load && CGO_ENABLED=0 go test ./... -count=1)   # 嵌套模块：真实加载并核对 sdl.LoadedPath 与版本
-# 集成测试：用 puresdl 真正加载内嵌库并比较 SDL_GetVersion 与 libsdl.Version
+go run ./tools/update -check      # Offline: gzip/raw hashes, executable headers (ELF/Mach-O/PE and architecture), generated files, and Version synchronization
+go test ./... -count=1            # Unit tests (root module; excludes load/)
+(cd load && CGO_ENABLED=0 go test ./... -count=1)   # Nested module: load the real library and verify sdl.LoadedPath and version
+# Integration test: load the embedded library with puresdl and compare SDL_GetVersion with libsdl.Version
 LIBSDL_PURESDL_DIR=/path/to/puresdl go test . -run TestLoad -v
-# 额外：在 docker 中运行 linux/amd64 与 linux/arm64，或在 Apple Silicon 上经 Rosetta 运行 darwin/amd64
+# Optional: run linux/amd64 and linux/arm64 in Docker, or darwin/amd64 under Rosetta on Apple Silicon
 LIBSDL_DOCKER=1 LIBSDL_ROSETTA=1 LIBSDL_PURESDL_DIR=/path/to/puresdl go test . -run TestLoad -v
 ```
 
-## 已知限制
+## Known limitations
 
-- Windows 库只做了静态验证（PE 头、digest），本仓库的作者环境无法运行；CI 的 windows 矩阵会运行集成测试。
-- macOS 重新签名的结果取决于 `codesign` 版本，重新生成 darwin 资源可能得到不同哈希；以 `MANIFEST.json` 为准。
-- Go 的 gzip 压缩率略低于 `gzip -9`（约 3% 至 5%），换来可复现且无外部依赖。
-- 仓库每次升级会新增约 7 MB 二进制到 git 历史。
+- Windows libraries have only been checked statically (PE header and digest) in the author's environment; the Windows CI matrix runs integration tests.
+- The result of re-signing macOS libraries depends on the `codesign` version, so regenerating the darwin assets may produce a different hash. Use `MANIFEST.json` as the source of truth.
+- Go's gzip compression is about 3% to 5% less effective than `gzip -9`, in exchange for reproducibility and no external dependencies.
+- Each SDL upgrade adds about 7 MB of binary data to git history.
 
-## 许可证
+## License
 
-本模块代码见仓库许可；内嵌的 SDL 库遵循 zlib 许可证，见 `LICENSE-SDL`。
+The libsdl project code is licensed under the MIT License; see [`LICENSE`](LICENSE). The embedded SDL libraries are licensed under the zlib License; see [`LICENSE-SDL`](LICENSE-SDL).
