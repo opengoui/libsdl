@@ -651,3 +651,21 @@ func TestHelperProcess(t *testing.T) {
 }
 
 func timeAgo(hours int) time.Time { return time.Now().Add(-time.Duration(hours) * time.Hour) }
+
+func TestStaleTempFilesRemovedWhenLibraryIsValid(t *testing.T) {
+	e := fakeExtractor(t, "content")
+	d := t.TempDir()
+	if _, err := e.ensure(d); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(d, "libFake.so.0.123.tmp")
+	os.WriteFile(old, nil, 0o600)
+	past := timeAgo(2)
+	os.Chtimes(old, past, past)
+	if _, err := e.ensure(d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("stale temp file survived next to a valid library")
+	}
+}

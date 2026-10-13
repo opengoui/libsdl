@@ -2,10 +2,9 @@
 // github.com/opengoui/libsdl to disk and loads it with puresdl.
 //
 // It lives in its own module so that libsdl itself stays free of
-// dependencies. Unlike importing github.com/opengoui/libsdl/auto, [Load] does
-// not depend on package initialisation order: it switches puresdl to the
-// extracted library even when puresdl already loaded a system copy while it
-// was being imported.
+// dependencies. [Load] does not depend on package initialisation order: it
+// switches puresdl to the extracted library even when puresdl already loaded
+// a system copy while it was being imported.
 //
 //	path, err := load.Load("/opt/myapp/lib") // or load.Load() for the temp dir
 //	if err != nil { log.Fatal(err) }

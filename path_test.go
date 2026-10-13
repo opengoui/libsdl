@@ -53,15 +53,21 @@ func TestExtractCustomDirAndEnv(t *testing.T) {
 	if ents, _ := os.ReadDir(root); len(ents) != 0 {
 		t.Fatalf("temp dir used although a directory was given: %v", ents)
 	}
-	// Memoised per directory: a later change on disk is not noticed...
+	// A memoised hit only re-checks existence and size, so same-size
+	// tampering is not noticed...
+	orig, _ := os.ReadFile(q)
+	same := append([]byte(nil), orig...)
+	same[0] ^= 0xff
+	os.WriteFile(q, same, 0o755)
+	if _, err := Extract(argDir); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(q); string(b) != string(same) {
+		t.Fatal("memoised call rewrote a file of the right size")
+	}
+	// ...but a different size is repaired, and a trailing-slash variant
+	// shares the cache entry.
 	os.WriteFile(q, []byte("tampered"), 0o755)
-	if q2, err := Extract(argDir); err != nil || q2 != q {
-		t.Fatalf("memoised Extract = %q, %v", q2, err)
-	}
-	if b, _ := os.ReadFile(q); string(b) != "tampered" {
-		t.Fatal("memoised call touched the file")
-	}
-	// ...but a fresh directory key is extracted again, repairing the file.
 	if _, err := Extract(argDir + string(filepath.Separator) + "."); err != nil {
 		t.Fatal(err)
 	}
@@ -83,5 +89,59 @@ func TestExtractErrorsAreNotMemoised(t *testing.T) {
 	os.Remove(file)
 	if _, err := Extract(dir); err != nil {
 		t.Fatalf("after fixing the cause: %v", err)
+	}
+}
+
+func TestExtractMemoRevalidated(t *testing.T) {
+	if !supported {
+		t.Skip("unsupported platform")
+	}
+	d := t.TempDir()
+	p1, err := Extract(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(p1); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := Extract(d + string(filepath.Separator))
+	if err != nil || p2 != p1 {
+		t.Fatalf("Extract after removal = %q, %v; want %q", p2, err, p1)
+	}
+	if _, err := os.Stat(p2); err != nil {
+		t.Fatalf("library was not restored: %v", err)
+	}
+}
+
+func TestExtractRelativeDirFollowsChdir(t *testing.T) {
+	if !supported {
+		t.Skip("unsupported platform")
+	}
+	a, b := t.TempDir(), t.TempDir()
+	t.Chdir(a)
+	p1, err := Extract("rel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(b)
+	p2, err := Extract("rel")
+	if err != nil || p1 == p2 || filepath.Dir(filepath.Dir(p2)) == filepath.Dir(filepath.Dir(p1)) {
+		t.Fatalf("p1 = %q, p2 = %q, %v", p1, p2, err)
+	}
+	if _, err := os.Stat(p2); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExtractRejectsTilde(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	for _, d := range []string{"~", "~/sdl"} {
+		if _, err := Extract(d); err == nil {
+			t.Errorf("Extract(%q) succeeded", d)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "~")); err == nil {
+		t.Error("a directory named ~ was created")
 	}
 }

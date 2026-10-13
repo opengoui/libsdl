@@ -64,7 +64,7 @@ const DirEnv = "LIBSDL_DIR"
 
 var (
 	extractMu   sync.Mutex
-	extractDone = map[string]string{} // effective directory ("" = temp default) -> path
+	extractDone = map[string]string{} // absolute directory ("" = temp default) -> path
 )
 
 // Extract releases the embedded SDL3 shared library into dir and returns the
@@ -98,22 +98,32 @@ var (
 // error. Default directories are not removed automatically.
 //
 // An explicit dir always wins over LIBSDL_DIR. A relative dir is made
-// absolute. Extract is safe for concurrent use, also across processes, and
-// remembers the result of each successful call per directory.
+// absolute against the current working directory at the time of the call. A
+// leading "~" is not expanded and is rejected with an error; pass an absolute
+// path (for example built from os.UserHomeDir). Extract is safe for
+// concurrent use, also across processes, and remembers the result of each
+// successful call per absolute directory. A remembered result is used only
+// while the file still exists with the embedded size; otherwise the file is
+// verified and rewritten again.
 func Extract(dir string) (string, error) {
 	if dir == "" {
 		dir = os.Getenv(DirEnv)
 	}
-	extractMu.Lock()
-	defer extractMu.Unlock()
-	if p, ok := extractDone[dir]; ok {
-		return p, nil
-	}
-	p, err := current().ensure(dir)
+	e := current()
+	key, err := e.cacheKey(dir)
 	if err != nil {
 		return "", err
 	}
-	extractDone[dir] = p
+	extractMu.Lock()
+	defer extractMu.Unlock()
+	if p, ok := extractDone[key]; ok && e.stillThere(p) {
+		return p, nil
+	}
+	p, err := e.ensure(dir)
+	if err != nil {
+		return "", err
+	}
+	extractDone[key] = p
 	return p, nil
 }
 

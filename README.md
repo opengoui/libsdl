@@ -6,7 +6,7 @@
 
 当前固定版本：**SDL 3.4.18**（上游标签 `release-3.4.18`），见 `libsdl.Version` 与 `assets/MANIFEST.json`。
 
-## 使用：三种方式
+## 使用：两种方式
 
 ### 1. `load.Load`（推荐）
 
@@ -27,24 +27,11 @@ macOS 上若已经映射了另一份 SDL3，切换后两份镜像同时存在，
 Windows 上同名 `SDL3.dll` 若已加载，系统加载器可能直接返回已加载的模块，应让 `Load` 先于其它加载。
 
 `load/go.mod` 里的 `replace github.com/opengoui/libsdl => ../` 与 `replace github.com/opengoui/puresdl => ../../puresdl`
-只是**开发期**写法（三个仓库并排检出）；发布时应删除并改为引用带标签的版本。
+只是**开发期**写法（三个仓库并排检出）；发布时应删除并改为引用带标签的版本（包括 `load/vX.Y.Z` 标签）。
+Go 会忽略依赖模块里的 `replace`，所以在发布前，使用方模块必须自己重复这三条 `replace`
+（`libsdl`、`libsdl/load`、`puresdl`，指向本地检出），或使用 `go.work` 文件，否则 `go get github.com/opengoui/libsdl/load` 无法解析 `v0.0.0`。
 
-### 2. `libsdl/auto`（仅靠环境变量）
-
-```go
-import (
-    _ "github.com/opengoui/libsdl/auto" // 必须在 puresdl 之前初始化
-    "github.com/opengoui/puresdl/sdl"
-)
-```
-
-`auto` 在自己的 `init` 中把 `SDL3_LIBRARY` 设为 `libsdl.Path()`（已设置则不覆盖；`Path()` 遵循 `LIBSDL_DIR`），
-puresdl 的 `init` 随后就直接加载内嵌库。**初始化顺序警告**：Go 按导入路径的字典序初始化互相无依赖的包，
-`github.com/opengoui/libsdl/auto` 恰好排在 `github.com/opengoui/puresdl/sdl` 之前，这是巧合而非保证；
-改了导入路径（例如 vendor、replace 到别的路径）就可能失效，此时 puresdl 会静默回退到系统库。
-需要确定性时用方式 1。释放失败时 `auto` 不改环境，puresdl 回退系统库。
-
-### 3. 手动 `Extract` + `sdl.Load`
+### 2. 手动 `Extract` + `sdl.Load`
 
 ```go
 path, err := libsdl.Extract("/opt/myapp/lib") // dir == "" 用 LIBSDL_DIR 或临时目录；等价于 libsdl.Path()
@@ -56,17 +43,17 @@ err = sdl.Load(path)                          // 需要支持切换的 puresdl�
 
 ### 释放策略
 
-API：`Extract(dir string) (string, error)`（并发安全，每个目录记忆一次成功结果，错误不记忆）、
+API：`Extract(dir string) (string, error)`（并发安全，每个绝对目录记忆一次成功结果（命中时会重新检查文件仍存在且大小一致，否则重新校验/释放），错误不记忆）、
 `Path()`（等价于 `Extract("")`）、`Info()`、`Version`、`Library`、常量 `DirEnv = "LIBSDL_DIR"`。
 库名为 `libSDL3.so.0`、`libSDL3.dylib`、`SDL3.dll`。
 
 **自定义目录**（`Extract(dir)` 的参数，或 `dir == ""` 时的环境变量 `LIBSDL_DIR`；显式参数优先）：
 
-- 目录不存在则 `MkdirAll(0755)`；无法创建或不可写直接报错，**不会回退到别处**。相对路径会转为绝对路径。
+- 目录不存在则 `MkdirAll(0755)`；无法创建或不可写直接报错，**不会回退到别处**。相对路径会转为绝对路径；以 `~` 开头的路径**不会**展开，直接报错。
 - 目标 `<dir>/<库名>` 是**普通文件**且大小与 SHA-256 都等于内嵌库时原样复用（不改 inode 与 mtime）；
   缺失、截断、内容不同、符号链接等都会重写：先在同目录写临时文件（0755），再 `rename` 覆盖，因此读者不会看到半成品，
   符号链接被替换为普通文件而**不会写穿**到链接目标；目标是目录则报错。出错时不留临时文件，
-  同目录里属于本库的、超过 1 小时的残留 `*.tmp` 会被清理，其它文件不动。
+  同目录里属于本库的、超过 1 小时的残留 `*.tmp` 在每次释放（包括复用现有文件时）都会被清理，其它文件不动。
 - **不做属主/权限检查**：用户选择的目录（例如可执行文件旁的共享安装目录）完全合法。代价是哈希校验只防损坏，
   不防能写该目录的恶意进程，请选择只有自己能写的目录。
 - Windows：已加载的 DLL 无法被替换。若文件内容不同且正被使用，`rename` 失败，返回明确说明"可能被运行中的进程加载"的错误
@@ -85,7 +72,7 @@ API：`Extract(dir string) (string, error)`（并发安全，每个目录记忆�
 ### puresdl 的 `Load` 切换
 
 `sdl.Load(path)`（非空路径）在已加载另一份库时会打开新路径、重新绑定全部函数并更新 `sdl.LoadedPath()`；相同路径是空操作，
-路径无效则返回错误且旧库继续可用。切换不能与 SDL 调用并发。
+路径无法打开、或打开的文件不是 SDL3（找不到 `SDL_GetVersion`）时返回错误且旧库继续可用。切换不能与 SDL 调用并发。
 
 ## 平台与来源
 
@@ -108,7 +95,6 @@ Linux 构建细节见 `tools/linux/build.sh`：zig 0.17（`-target <arch>-linux-
 ```
 libsdl.go                 文档、Version 常量、Library/Info/Extract/Path
 extract.go                释放与校验（原子写入、并发安全）
-auto/                     init 时设置 SDL3_LIBRARY 的便捷包（无依赖）
 load/                     嵌套模块：Load(dir...) = Extract + puresdl 的 sdl.Load
 binary_<os>_<arch>.go     6 个，由 tools/update 生成，go:embed 各自的 assets/sdl_<os>_<arch>.gz
 binary_unsupported.go     其它平台的占位

@@ -42,11 +42,40 @@ func (e *extractor) ensure(dir string) (string, error) {
 	if dir == "" {
 		return e.install(e.defaultDir(), true)
 	}
+	abs, err := absDir(dir)
+	if err != nil {
+		return "", err
+	}
+	return e.install(abs, false)
+}
+
+// absDir makes a user-chosen directory absolute and clean. A leading "~" is
+// rejected instead of silently creating a directory named "~".
+func absDir(dir string) (string, error) {
+	if dir == "~" || strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
+		return "", fmt.Errorf("libsdl: directory %q: a leading ~ is not expanded, use an absolute path", dir)
+	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", fmt.Errorf("libsdl: custom directory %q: %w", dir, err)
 	}
-	return e.install(abs, false)
+	return abs, nil
+}
+
+// cacheKey is the memoization key for dir: "" for the default directory,
+// otherwise the absolute, cleaned path.
+func (e *extractor) cacheKey(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	return absDir(dir)
+}
+
+// stillThere is the cheap re-check for a memoized path: a regular file of the
+// expected size.
+func (e *extractor) stillThere(path string) bool {
+	li, err := os.Lstat(path)
+	return err == nil && li.Mode().IsRegular() && li.Size() == e.size
 }
 
 // trustDir makes sure dir is a real directory owned by the current user and
@@ -93,10 +122,10 @@ func (e *extractor) install(dir string, strict bool) (string, error) {
 	if li, err := os.Lstat(final); err == nil && li.IsDir() {
 		return "", fmt.Errorf("libsdl: %s is a directory, expected the library file", final)
 	}
+	e.removeStale(dir)
 	if e.valid(final, strict) {
 		return final, nil
 	}
-	e.removeStale(dir)
 
 	f, err := os.CreateTemp(dir, e.name+".*.tmp")
 	if err != nil {
