@@ -94,7 +94,7 @@ func puresdlDir(t *testing.T) string {
 }
 
 // TestLoadWithPuresdl extracts the embedded library of the host platform
-// into a fresh cache directory, loads it through puresdl, and compares
+// into a fresh temp directory, loads it through puresdl, and compares
 // SDL_GetVersion with libsdl.Version. It runs in a subprocess because
 // puresdl loads a library when it is imported.
 func TestLoadWithPuresdl(t *testing.T) {
@@ -104,8 +104,9 @@ func TestLoadWithPuresdl(t *testing.T) {
 	}
 	exe := buildProbe(t, dir, runtime.GOOS, runtime.GOARCH)
 
+	tmp := t.TempDir() // the default extraction directory lives below os.TempDir()
 	env := append(os.Environ(),
-		"HOME="+t.TempDir(), "XDG_CACHE_HOME="+t.TempDir(), "LocalAppData="+t.TempDir(),
+		"TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "LIBSDL_DIR=",
 		"SDL_VIDEODRIVER=dummy", "SDL_AUDIODRIVER=dummy")
 	pathCmd := exec.Command(exe, "-path")
 	pathCmd.Env = env
@@ -115,7 +116,7 @@ func TestLoadWithPuresdl(t *testing.T) {
 	}
 	path := string(out)
 	if !strings.Contains(path, libsdl.Version) {
-		t.Errorf("cache path %q does not contain version %s", path, libsdl.Version)
+		t.Errorf("extraction path %q does not contain version %s", path, libsdl.Version)
 	}
 
 	cmd := exec.Command(exe)
@@ -150,7 +151,7 @@ func TestLoadLinuxInDocker(t *testing.T) {
 			exe := buildProbe(t, dir, "linux", arch)
 			script := `export SDL3_LIBRARY=$(/p/probe -path) && /p/probe`
 			cmd := exec.Command("docker", "run", "--rm", "--platform", "linux/"+arch,
-				"-v", filepath.Dir(exe)+":/p:ro", "-e", "HOME=/tmp", "-e", "SDL_VIDEODRIVER=dummy",
+				"-v", filepath.Dir(exe)+":/p:ro", "-e", "HOME=/tmp", "-e", "LIBSDL_DIR=", "-e", "SDL_VIDEODRIVER=dummy",
 				"-e", "SDL_AUDIODRIVER=dummy", "debian:stable-slim", "sh", "-c", script)
 			out, err := cmd.CombinedOutput()
 			t.Logf("%s", out)
@@ -172,7 +173,7 @@ func TestLoadDarwinAmd64UnderRosetta(t *testing.T) {
 		t.Skip("set LIBSDL_ROSETTA=1 on an Apple Silicon Mac")
 	}
 	exe := buildProbe(t, dir, "darwin", "amd64")
-	env := append(os.Environ(), "HOME="+t.TempDir(), "SDL_VIDEODRIVER=dummy", "SDL_AUDIODRIVER=dummy")
+	env := append(os.Environ(), "TMPDIR="+t.TempDir(), "LIBSDL_DIR=", "SDL_VIDEODRIVER=dummy", "SDL_AUDIODRIVER=dummy")
 	pathCmd := exec.Command("arch", "-x86_64", exe, "-path")
 	pathCmd.Env = env
 	out, err := pathCmd.CombinedOutput()

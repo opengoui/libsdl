@@ -1,28 +1,32 @@
 // Package libsdl embeds a gzip-compressed SDL3 shared library for the
-// current GOOS/GOARCH and extracts it on demand so that a purego based
-// binding can load it.
+// current GOOS/GOARCH and releases it to disk on demand so that a purego
+// based binding can load it.
 //
 // Only the blob for the target platform is linked into the binary. Supported
 // targets are windows, darwin and linux on amd64 and arm64; every other
-// platform (including js) makes [Path] fail with an error that matches
-// [errors.ErrUnsupported].
+// platform (including js) makes [Extract] and [Path] fail with an error that
+// matches [errors.ErrUnsupported].
 //
-// Typical use with puresdl:
+// This package has no dependencies. To release and load in one call use the
+// nested module github.com/opengoui/libsdl/load:
 //
-//	path, err := libsdl.Path()
+//	path, err := load.Load("/opt/myapp/lib") // or load.Load() for the temp dir
+//
+// or release the file yourself and hand the path to puresdl:
+//
+//	path, err := libsdl.Extract("/opt/myapp/lib")
 //	if err != nil { return err }
 //	err = sdl.Load(path)
 //
-// The library is written once to a per-user cache directory named after the
-// SDL version and the content hash, so later runs and concurrent processes
-// reuse it. See [Path] for details.
+// With a custom directory the library is reused only if the file there has
+// the embedded size and SHA-256, and is rewritten otherwise. Without one it
+// goes to a private directory below os.TempDir(). See [Extract].
 package libsdl
 
 import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sync"
 )
@@ -54,42 +58,69 @@ func Info() Library {
 	return Library{Version: Version, Name: libName, Size: libSize, SHA256: libSHA256}
 }
 
+// DirEnv is the environment variable that selects the directory used when
+// [Extract] is called with an empty dir (and therefore by [Path]).
+const DirEnv = "LIBSDL_DIR"
+
 var (
-	pathMu   sync.Mutex
-	pathDone string
+	extractMu   sync.Mutex
+	extractDone = map[string]string{} // effective directory ("" = temp default) -> path
 )
 
-// Path returns the file system path of the embedded SDL3 shared library,
-// extracting it first if needed. Pass the result to puresdl's sdl.Load.
+// Extract releases the embedded SDL3 shared library into dir and returns the
+// path of the file, named like the platform library (libSDL3.so.0,
+// libSDL3.dylib or SDL3.dll). Pass the result to puresdl's sdl.Load.
 //
-// The library lives in os.UserCacheDir()/libsdl/<version>-<sha256 prefix>/
-// under its platform name (libSDL3.so.0, libSDL3.dylib or SDL3.dll). An
-// existing file is reused only if it is a regular file owned by the current
-// user, not writable by others, and its size and SHA-256 match the embedded
-// library; otherwise it is replaced. The directory must likewise be private
-// to the user (it is chmod 0700 when owned by the user). The hash check is no
-// defence against a hostile process of the same user. Files are written to a temporary name
-// in the same directory and renamed into place, so concurrent processes never
-// observe a partial file and never overwrite a library that another process
-// has loaded (important on Windows). If the cache directory cannot be used,
-// the library is extracted into a per-user directory
-// os.TempDir()/libsdl-<uid>-<version>-<hash prefix> that is reused across runs
-// and not removed automatically.
+// Custom directory. A non-empty dir (or, when dir is empty, the directory in
+// the LIBSDL_DIR environment variable) is created with mode 0755 if needed.
+// If dir/<name> already is a regular file whose size and SHA-256 equal the
+// embedded library it is reused untouched; a missing, truncated, modified or
+// otherwise different file, or a symlink, is replaced by a regular file.
+// Replacement writes a temporary file in dir and renames it into place, so
+// readers never see a partial file and a symlink is replaced, never written
+// through. A directory at the target path is an error. A directory that
+// cannot be created or written is an error: there is no fallback to another
+// location. Ownership and permissions of a user-chosen directory are not
+// checked, so that shared install locations (next to the executable, say)
+// work; the hash check protects against corruption, not against a hostile
+// process that can write to the directory. Choose a directory only you can
+// write to. On Windows a DLL that is loaded cannot be replaced: if the file
+// differs and is in use, Extract returns an error saying so. A file with the
+// right hash is reused even while loaded.
 //
-// Path is safe for concurrent use. The result is memoized after success.
-func Path() (string, error) {
-	pathMu.Lock()
-	defer pathMu.Unlock()
-	if pathDone != "" {
-		return pathDone, nil
+// Default directory. With neither dir nor LIBSDL_DIR, the library goes to
+// os.TempDir()/libsdl-<uid>-<version>-<sha256 prefix>/. The name is
+// deterministic, so repeated runs and concurrent processes share one copy.
+// The directory must be a real directory owned by the current user (it is
+// chmod 0700 when it is ours and too open), and an existing file is reused
+// only if it is a regular file owned by the user and not writable by others
+// with a matching size and hash; a directory owned by someone else is an
+// error. Default directories are not removed automatically.
+//
+// An explicit dir always wins over LIBSDL_DIR. A relative dir is made
+// absolute. Extract is safe for concurrent use, also across processes, and
+// remembers the result of each successful call per directory.
+func Extract(dir string) (string, error) {
+	if dir == "" {
+		dir = os.Getenv(DirEnv)
 	}
-	p, err := current().ensure()
+	extractMu.Lock()
+	defer extractMu.Unlock()
+	if p, ok := extractDone[dir]; ok {
+		return p, nil
+	}
+	p, err := current().ensure(dir)
 	if err != nil {
 		return "", err
 	}
-	pathDone = p
+	extractDone[dir] = p
 	return p, nil
 }
+
+// Path is Extract(""): it releases the library into the directory named by
+// LIBSDL_DIR, or the private default directory below os.TempDir() when the
+// variable is unset, and returns its path.
+func Path() (string, error) { return Extract("") }
 
 // current builds the extractor for the embedded platform blob.
 func current() *extractor {
@@ -99,7 +130,6 @@ func current() *extractor {
 		size:    libSize,
 		sum:     libSHA256,
 		version: Version,
-		cache:   os.UserCacheDir,
 	}
 }
 
@@ -112,10 +142,3 @@ func errUnsupported() error {
 // errBadAsset reports an embedded blob that does not match its recorded
 // size or hash. Falling back to another directory cannot help.
 var errBadAsset = errors.New("libsdl: embedded library does not match its recorded hash")
-
-// cacheSubdir is the directory name below the user cache dir.
-const cacheSubdir = "libsdl"
-
-func dirName(version, sum string) string {
-	return filepath.Join(cacheSubdir, version+"-"+sum[:16])
-}
