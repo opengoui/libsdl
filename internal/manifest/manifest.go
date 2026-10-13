@@ -227,7 +227,7 @@ func RenderBinary(t Target, f File) []byte {
 	return b.Bytes()
 }
 
-var versionRe = regexp.MustCompile(`(?m)^const Version = "([^"]*)"$`)
+var versionRe = regexp.MustCompile(`(?m)^const Version = "([^"]*)"(\r?)$`)
 
 // ReadVersion extracts the Version constant from libsdl.go source.
 func ReadVersion(src []byte) (string, error) {
@@ -243,7 +243,7 @@ func SetVersion(src []byte, version string) ([]byte, error) {
 	if _, err := ReadVersion(src); err != nil {
 		return nil, err
 	}
-	return versionRe.ReplaceAll(src, []byte(`const Version = "`+version+`"`)), nil
+	return versionRe.ReplaceAll(src, []byte(`const Version = "`+version+`"$2`)), nil
 }
 
 // WriteGenerated writes the binary_*.go files of all manifest entries and
@@ -348,7 +348,7 @@ func Check(root string) error {
 		have, err := os.ReadFile(filepath.Join(root, BinaryFileName(t)))
 		if err != nil {
 			bad("%s: %v", name, err)
-		} else if !bytes.Equal(have, RenderBinary(t, *f)) {
+		} else if !bytes.Equal(bytes.ReplaceAll(have, []byte("\r\n"), []byte("\n")), RenderBinary(t, *f)) {
 			bad("%s: %s is not in sync with the manifest (run tools/update)", name, BinaryFileName(t))
 		}
 	}

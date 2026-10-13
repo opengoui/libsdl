@@ -150,7 +150,7 @@ func TestLoadLinuxInDocker(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			exe := buildProbe(t, dir, "linux", arch)
 			script := `export SDL3_LIBRARY=$(/p/probe -path) && /p/probe`
-			cmd := exec.Command("docker", "run", "--rm", "--platform", "linux/"+arch,
+			cmd := exec.Command("docker", "run", "--quiet", "--rm", "--platform", "linux/"+arch,
 				"-v", filepath.Dir(exe)+":/p:ro", "-e", "HOME=/tmp", "-e", "LIBSDL_DIR=", "-e", "SDL_VIDEODRIVER=dummy",
 				"-e", "SDL_AUDIODRIVER=dummy", "debian:stable-slim", "sh", "-c", script)
 			out, err := cmd.CombinedOutput()
