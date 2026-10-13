@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: libsdl
-      # The integration test builds a probe against puresdl, a sibling checkout.
+      # The integration test and the nested load module need puresdl as a sibling checkout.
       - uses: actions/checkout@v4
         with:
           repository: opengoui/puresdl
@@ -45,6 +45,20 @@ jobs:
         env:
           LIBSDL_PURESDL_DIR: ${{ github.workspace }}/puresdl
           CGO_ENABLED: "0"
+        run: go test ./... -count=1 -v
+      # The nested module (replace => ../ and ../../puresdl) loads the real library.
+      - name: build load module
+        working-directory: libsdl/load
+        run: go build ./...
+      - name: vet load module
+        working-directory: libsdl/load
+        run: go vet ./...
+      - name: test load module
+        working-directory: libsdl/load
+        env:
+          CGO_ENABLED: "0"
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
         run: go test ./... -count=1 -v
 
   linux-docker:
