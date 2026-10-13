@@ -40,21 +40,44 @@ func (e *extractor) ensure() (string, error) {
 			return "", err
 		}
 	}
-	tmp, merr := os.MkdirTemp("", "libsdl-*")
-	if merr != nil {
-		return "", fmt.Errorf("libsdl: cache unusable (%v) and no temp dir: %w", err, merr)
-	}
+	// Deterministic per-user fallback so repeated runs reuse one copy
+	// instead of leaking a new directory each time.
+	tmp := filepath.Join(os.TempDir(), "libsdl-"+userTag()+"-"+e.version+"-"+e.sum[:16])
 	p, ierr := e.install(tmp)
 	if ierr != nil {
-		os.RemoveAll(tmp)
-		return "", ierr
+		return "", fmt.Errorf("libsdl: cache unusable (%v): %w", err, ierr)
 	}
 	return p, nil
+}
+
+// trustDir makes sure dir is a real directory owned by the current user and
+// not writable by others, tightening the mode when it is ours.
+func trustDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("libsdl: %s is not a directory", dir)
+	}
+	if ownedByUs(info) {
+		return nil
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	if info, err = os.Lstat(dir); err != nil || !ownedByUs(info) {
+		return fmt.Errorf("libsdl: %s is not private to the current user", dir)
+	}
+	return nil
 }
 
 // install makes dir/name a valid copy of the library and returns its path.
 func (e *extractor) install(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := trustDir(dir); err != nil {
 		return "", err
 	}
 	final := filepath.Join(dir, e.name)
@@ -115,6 +138,9 @@ func (e *extractor) write(f *os.File) error {
 // valid reports whether path holds exactly the expected content. The size
 // check short-circuits most corrupt or truncated files without hashing.
 func (e *extractor) valid(path string) bool {
+	if li, err := os.Lstat(path); err != nil || !li.Mode().IsRegular() || !ownedByUs(li) {
+		return false
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return false

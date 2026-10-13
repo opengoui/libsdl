@@ -309,3 +309,34 @@ func TestHelperProcess(t *testing.T) {
 	}
 	fmt.Println("PATH=" + p)
 }
+
+func TestPermissiveCacheIsTightened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	cache := t.TempDir()
+	e := fakeExtractor(t, "content", cache)
+	dir := filepath.Join(cache, dirName(e.version, e.sum))
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(dir, 0o777)
+	final := filepath.Join(dir, e.name)
+	if err := os.WriteFile(final, []byte("content"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(final, 0o666)
+	p, err := e.ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, p} {
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm()&0o022 != 0 {
+			t.Errorf("%s is group/other writable: %v", path, st.Mode())
+		}
+	}
+}

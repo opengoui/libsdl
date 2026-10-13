@@ -10,28 +10,26 @@
 
 ```go
 import (
-    "github.com/opengoui/libsdl"
+    _ "github.com/opengoui/libsdl/auto" // 必须排在 puresdl 之前
     "github.com/opengoui/puresdl/sdl"
 )
-
-path, err := libsdl.Path() // 解压（若需要）并返回库文件路径
-if err != nil { /* 不受支持的平台时 errors.Is(err, errors.ErrUnsupported) */ }
-err = sdl.Load(path)
 ```
 
-注意：puresdl 在 `import` 时就会自动调用 `Load("")`（搜索 `SDL3_LIBRARY` 与系统默认路径），
-并且在 `SDL3_LIBRARY` 加载失败时静默回退到系统库（例如 Homebrew）。如果要**确保使用内嵌库**，
-请在进程启动前把 `SDL3_LIBRARY` 设为 `libsdl.Path()` 的结果（`testdata/probe` 演示了这种两步法，
-并通过 `/proc/self/maps` 或 `_dyld_get_image_name` 验证实际映射的文件）。
+puresdl 在 `import` 时就会自动调用 `Load("")`（搜索 `SDL3_LIBRARY` 与系统默认路径），之后的 `sdl.Load(path)` 是空操作，
+并且 `SDL3_LIBRARY` 加载失败时会静默回退到系统库（例如 Homebrew）。因此**不能**在 `main` 里先 `libsdl.Path()` 再 `sdl.Load(path)`：
+那样实际映射的仍是系统库。`libsdl/auto` 在自己的 `init` 中把 `SDL3_LIBRARY` 设为 `libsdl.Path()` 的结果（已设置则不覆盖），
+所以必须先于 puresdl 被导入；也可以在进程启动前自行设置该环境变量。`testdata/probe` 通过 `/proc/self/maps` 或
+`_dyld_get_image_name` 验证实际映射的文件。只需要路径时仍可直接调用 `libsdl.Path()`
+（不受支持的平台上 `errors.Is(err, errors.ErrUnsupported)`）。
 
 `libsdl.Info()` 不做 I/O，返回当前平台库的名称、大小与 SHA-256。
 
 ### 解压策略
 
 - 目标：`os.UserCacheDir()/libsdl/<版本>-<sha256 前 16 位>/<库名>`，库名为 `libSDL3.so.0`、`libSDL3.dylib`、`SDL3.dll`。
-- 已存在的文件只有在**大小与 SHA-256 都匹配**时才复用，否则替换；先写临时文件再 `rename`，并发进程不会看到半成品，
+- 已存在的文件只有在**属主为当前用户、其他用户不可写，且大小与 SHA-256 都匹配**时才复用（目录同样必须私有，否则尝试 chmod 0700；哈希校验不防同用户的恶意进程），否则替换；先写临时文件再 `rename`，并发进程不会看到半成品，
   也不会覆盖已被他人加载的库（Windows 上很重要）。
-- 缓存目录不可用时回退到 `os.MkdirTemp`（不会自动删除）。
+- 缓存目录不可用时回退到固定的 `os.TempDir()/libsdl-<uid>-<版本>-<哈希前缀>`（跨运行复用，不会自动删除）。
 - 内嵌数据与记录的哈希不符时直接报错，不回退。
 
 ## 平台与来源

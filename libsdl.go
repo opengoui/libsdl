@@ -64,13 +64,17 @@ var (
 //
 // The library lives in os.UserCacheDir()/libsdl/<version>-<sha256 prefix>/
 // under its platform name (libSDL3.so.0, libSDL3.dylib or SDL3.dll). An
-// existing file is reused only if its size and SHA-256 match the embedded
-// library; otherwise it is replaced. Files are written to a temporary name
+// existing file is reused only if it is a regular file owned by the current
+// user, not writable by others, and its size and SHA-256 match the embedded
+// library; otherwise it is replaced. The directory must likewise be private
+// to the user (it is chmod 0700 when owned by the user). The hash check is no
+// defence against a hostile process of the same user. Files are written to a temporary name
 // in the same directory and renamed into place, so concurrent processes never
 // observe a partial file and never overwrite a library that another process
 // has loaded (important on Windows). If the cache directory cannot be used,
-// the library is extracted into a new os.MkdirTemp directory that is not
-// removed automatically.
+// the library is extracted into a per-user directory
+// os.TempDir()/libsdl-<uid>-<version>-<hash prefix> that is reused across runs
+// and not removed automatically.
 //
 // Path is safe for concurrent use. The result is memoized after success.
 func Path() (string, error) {
