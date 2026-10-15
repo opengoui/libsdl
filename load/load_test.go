@@ -38,6 +38,30 @@ func formatVersion(v int32) string {
 	return fmt.Sprintf("%d.%d.%d", v/1000000, v/1000%1000, v%1000)
 }
 
+func TestLoadFallbackAfterDefaultExtractionPermissionError(t *testing.T) {
+	initialErr := fmt.Errorf("default temp directory: %w", os.ErrPermission)
+	var extracted, bound []string
+	path, err := loadFallback(initialErr, []string{"runtime", "cache"}, func(dir string) (string, error) {
+		extracted = append(extracted, dir)
+		if dir == "runtime" {
+			return "", errors.New("runtime directory is read-only")
+		}
+		return filepath.Join(dir, "SDL3.so"), nil
+	}, func(path string) error {
+		bound = append(bound, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join("cache", "SDL3.so") {
+		t.Fatalf("fallback path = %q", path)
+	}
+	if fmt.Sprint(extracted) != "[runtime cache]" || fmt.Sprint(bound) != "[cache/SDL3.so]" {
+		t.Fatalf("extracted %v and bound %v; want both fallbacks tried and cache loaded", extracted, bound)
+	}
+}
+
 func TestLoadCustomAndDefaultDirs(t *testing.T) {
 	skipUnsupported(t)
 	t.Setenv(libsdl.DirEnv, "")

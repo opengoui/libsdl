@@ -1,9 +1,11 @@
 package libsdl
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -143,5 +145,112 @@ func TestExtractRejectsTilde(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "~")); err == nil {
 		t.Error("a directory named ~ was created")
+	}
+}
+
+func TestExtractForceRevalidatesMemoizedFile(t *testing.T) {
+	if !supported {
+		t.Skip("unsupported platform")
+	}
+	dir := t.TempDir()
+	path, err := Extract(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsExtracted(dir) {
+		t.Fatal("a newly extracted library was not recognized")
+	}
+
+	tampered := bytes.Clone(original)
+	tampered[0] ^= 0xff
+	if err := os.WriteFile(path, tampered, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if IsExtracted(dir) {
+		t.Fatal("IsExtracted accepted same-size tampering")
+	}
+	if _, err := Extract(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, tampered) {
+		t.Fatalf("memoized Extract changed the file: %v", err)
+	}
+
+	if _, err := ExtractForce(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("ExtractForce did not restore the embedded bytes: %v", err)
+	}
+	if !IsExtracted(dir) {
+		t.Fatal("repaired library was not recognized")
+	}
+}
+
+func TestCleanCacheRemovesOnlyDefaultCache(t *testing.T) {
+	if !supported {
+		t.Skip("unsupported platform")
+	}
+	root := useTempRoot(t)
+	t.Setenv(DirEnv, "")
+	path, err := Extract("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultDir := filepath.Dir(path)
+	if filepath.Dir(defaultDir) != root {
+		t.Fatalf("default path %q is not below temp root %q", path, root)
+	}
+
+	customDir := t.TempDir()
+	t.Setenv(DirEnv, customDir)
+	customPath, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CleanCache(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(defaultDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("default cache still exists: %v", err)
+	}
+	if _, err := os.Stat(customPath); err != nil {
+		t.Fatalf("custom cache was removed: %v", err)
+	}
+	if IsExtracted(defaultDir) {
+		t.Fatal("removed default cache is still reported as extracted")
+	}
+
+	t.Setenv(DirEnv, "")
+	if _, err := Extract(""); err != nil {
+		t.Fatalf("Extract after cleanup: %v", err)
+	}
+}
+
+func TestCleanCacheRefusesSymlinkedDirectory(t *testing.T) {
+	if !supported {
+		t.Skip("unsupported platform")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks require additional privileges on Windows")
+	}
+	useTempRoot(t)
+	t.Setenv(DirEnv, "")
+	e := current()
+	victim := t.TempDir()
+	if err := os.Symlink(victim, e.defaultDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := CleanCache(); err == nil {
+		t.Fatal("CleanCache removed a symlinked cache directory")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("symlink target was removed: %v", err)
 	}
 }

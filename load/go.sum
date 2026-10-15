@@ -1,2 +1,6 @@
 github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6XeQ/0=
 github.com/ebitengine/purego v0.11.1/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
+github.com/opengoui/libsdl v0.0.0-20261013102345-2e2f5a1c5647 h1:On/l2WG0g9hZunRLfCkyn72t27V1VvkAbhusfc2A1qQ=
+github.com/opengoui/libsdl v0.0.0-20261013102345-2e2f5a1c5647/go.mod h1:K9uPFan3yD3aEsEj5DI76grNbQIYjVrqtkLYzn6IfzU=
+github.com/opengoui/puresdl v0.0.0-20261013085702-3f1730a640fb h1:P/ivxmGadoIjdyRubCO3nE5l3buJzwrs4sZfX3ClWQM=
+github.com/opengoui/puresdl v0.0.0-20261013085702-3f1730a640fb/go.mod h1:1/0+S8HmtHoCD6D7vs/0VEBvmlvYDZehr5SWgYbdHYY=

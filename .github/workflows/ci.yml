@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","ubuntu-24.04-arm","macos-latest","macos-15-intel","windows-latest","windows-11-arm"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","ubuntu-24.04-arm","macos-latest","macos-15-intel","windows-latest","windows-11-arm"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +32,16 @@ jobs:
         with:
           go-version-file: libsdl/go.mod
           cache-dependency-path: libsdl/go.mod
+      - name: Configure the local Go workspace
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          go work init ./libsdl ./puresdl ./libsdl/load
+          libsdl_version=$(awk '$1 == "github.com/opengoui/libsdl" {print $2}' libsdl/load/go.mod)
+          puresdl_version=$(awk '$1 == "github.com/opengoui/puresdl" {print $2}' libsdl/load/go.mod)
+          go work edit \
+            -replace="github.com/opengoui/libsdl@${libsdl_version}=./libsdl" \
+            -replace="github.com/opengoui/puresdl@${puresdl_version}=./puresdl"
       - name: build
         working-directory: libsdl
         run: go build ./...
@@ -64,6 +74,7 @@ jobs:
 
   linux-docker:
     name: linux libraries in docker (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -121,7 +121,11 @@ TOOLCHAIN
 # ---------------------------------------------------------------- 5. per-arch build
 build_arch() { # <goarch> <march>
   local goarch=$1 march=$2
-  local arch_dir=$WORK/$goarch sysroot=$WORK/$goarch/sysroot
+  local build_key=$VER-$GLIBC
+  if [ -n "${DEBIAN_SNAPSHOT:-}" ]; then build_key=$build_key-$DEBIAN_SNAPSHOT; fi
+  local arch_dir=$WORK/$build_key/$goarch
+  local sysroot_key=${DEBIAN_SNAPSHOT:-default}
+  local sysroot=$WORK/sysroot-$sysroot_key/$goarch
   local triple=$march-linux-gnu.$GLIBC
   mkdir -p "$arch_dir"
 
@@ -143,7 +147,6 @@ build_arch() { # <goarch> <march>
 
   log "configure + build linux/$goarch ($triple)"
   local B=$arch_dir/build
-  rm -rf "$B"
   # pkg-config is hermetic: only the sysroot is searched. wayland-scanner comes from the docker wrapper.
   PATH=$WORK/wrap:$PATH \
   PKG_CONFIG_LIBDIR=$sysroot/usr/lib/$march-linux-gnu/pkgconfig:$sysroot/usr/share/pkgconfig \

@@ -142,6 +142,11 @@ func (e *extractor) install(dir string, strict bool) (string, error) {
 		os.Remove(tmp)
 		return "", err
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return "", err
+	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return "", err
@@ -177,7 +182,7 @@ func (e *extractor) write(f *os.File) error {
 	if n != e.size || hex.EncodeToString(h.Sum(nil)) != e.sum {
 		return errBadAsset
 	}
-	return f.Sync()
+	return nil
 }
 
 // valid reports whether path holds exactly the expected content. The size

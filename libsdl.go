@@ -21,12 +21,16 @@
 // With a custom directory the library is reused only if the file there has
 // the embedded size and SHA-256, and is rewritten otherwise. Without one it
 // goes to a private directory below os.TempDir(). See [Extract].
+// [ExtractForce] bypasses the in-process shortcut and checks the full hash;
+// [IsExtracted] checks a directory without writing; [CleanCache] removes the
+// current user's default temp cache.
 package libsdl
 
 import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 )
@@ -106,9 +110,7 @@ var (
 // while the file still exists with the embedded size; otherwise the file is
 // verified and rewritten again.
 func Extract(dir string) (string, error) {
-	if dir == "" {
-		dir = os.Getenv(DirEnv)
-	}
+	dir = resolveDir(dir)
 	e := current()
 	key, err := e.cacheKey(dir)
 	if err != nil {
@@ -127,10 +129,88 @@ func Extract(dir string) (string, error) {
 	return p, nil
 }
 
+// ExtractForce verifies the full SHA-256 of the target file even when a prior
+// Extract call memoized it. A missing or modified file is rewritten.
+func ExtractForce(dir string) (string, error) {
+	dir = resolveDir(dir)
+	e := current()
+	key, err := e.cacheKey(dir)
+	if err != nil {
+		return "", err
+	}
+	extractMu.Lock()
+	defer extractMu.Unlock()
+	p, err := e.ensure(dir)
+	if err != nil {
+		return "", err
+	}
+	extractDone[key] = p
+	return p, nil
+}
+
+// IsExtracted reports whether dir contains a regular file matching the
+// embedded library's full size and SHA-256. It does not create or modify
+// files. An empty dir uses LIBSDL_DIR, then the private default directory.
+func IsExtracted(dir string) bool {
+	dir = resolveDir(dir)
+	e := current()
+	if e.blob == nil {
+		return false
+	}
+	path := e.defaultDir()
+	strict := dir == ""
+	if !strict {
+		abs, err := absDir(dir)
+		if err != nil {
+			return false
+		}
+		path = abs
+	}
+	return e.valid(filepath.Join(path, e.name), strict)
+}
+
+// CleanCache removes the current user's default temp directory for the
+// embedded library. It does not unload a library already mapped in this
+// process. A custom LIBSDL_DIR is left untouched. Call it only when no other
+// process may be extracting or loading this library; cleanup is not locked
+// across processes.
+func CleanCache() error {
+	e := current()
+	if e.blob == nil {
+		return errUnsupported()
+	}
+	dir := e.defaultDir()
+	extractMu.Lock()
+	defer extractMu.Unlock()
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		delete(extractDone, "")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("libsdl: inspect cache directory: %w", err)
+	}
+	if !info.IsDir() || !ownedByUs(info) {
+		return fmt.Errorf("libsdl: refusing to remove untrusted cache directory %s", dir)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("libsdl: remove cache directory: %w", err)
+	}
+	delete(extractDone, "")
+	return nil
+}
+
 // Path is Extract(""): it releases the library into the directory named by
 // LIBSDL_DIR, or the private default directory below os.TempDir() when the
 // variable is unset, and returns its path.
 func Path() (string, error) { return Extract("") }
+
+func resolveDir(dir string) string {
+	if dir == "" {
+		return os.Getenv(DirEnv)
+	}
+	return dir
+}
 
 // current builds the extractor for the embedded platform blob.
 func current() *extractor {
