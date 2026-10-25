@@ -18,6 +18,23 @@ func skipUnsupported(t *testing.T) {
 	}
 }
 
+// loadableTempDir returns a temporary directory that may hold a library
+// loaded into this process. On Windows a mapped DLL cannot be deleted before
+// the process exits, so such a directory must not live inside t.TempDir:
+// its automatic cleanup would fail the whole test. Cleanup here is best
+// effort; on Windows the loaded DLL itself is left behind.
+func loadableTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "libsdl-load-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(dir)
+	})
+	return dir
+}
+
 // checkLoaded verifies that path is the bound library and that it is the
 // pinned SDL release.
 func checkLoaded(t *testing.T, path string) {
@@ -57,7 +74,9 @@ func TestLoadFallbackAfterDefaultExtractionPermissionError(t *testing.T) {
 	if path != filepath.Join("cache", "SDL3.so") {
 		t.Fatalf("fallback path = %q", path)
 	}
-	if fmt.Sprint(extracted) != "[runtime cache]" || fmt.Sprint(bound) != "[cache/SDL3.so]" {
+	// The stub uses filepath.Join, so compare with the platform separator.
+	wantBound := fmt.Sprint([]string{filepath.Join("cache", "SDL3.so")})
+	if fmt.Sprint(extracted) != "[runtime cache]" || fmt.Sprint(bound) != wantBound {
 		t.Fatalf("extracted %v and bound %v; want both fallbacks tried and cache loaded", extracted, bound)
 	}
 }
@@ -65,12 +84,11 @@ func TestLoadFallbackAfterDefaultExtractionPermissionError(t *testing.T) {
 func TestLoadCustomAndDefaultDirs(t *testing.T) {
 	skipUnsupported(t)
 	t.Setenv(libsdl.DirEnv, "")
-	tmp := t.TempDir()
+	tmp := loadableTempDir(t)
+	custom := filepath.Join(loadableTempDir(t), "custom")
 	t.Setenv("TMPDIR", tmp)
 	t.Setenv("TMP", tmp)
 	t.Setenv("TEMP", tmp)
-
-	custom := filepath.Join(t.TempDir(), "custom")
 	p, err := Load(custom)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +117,7 @@ func TestLoadCustomAndDefaultDirs(t *testing.T) {
 
 func TestLoadErrorsKeepPreviousLibrary(t *testing.T) {
 	skipUnsupported(t)
-	first, err := Load(t.TempDir())
+	first, err := Load(loadableTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
