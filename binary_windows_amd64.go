@@ -9,8 +9,8 @@ import _ "embed"
 const (
 	supported = true
 	libName   = "SDL3.dll"
-	libSize   = 2848256
-	libSHA256 = "2b4b128d8d510cc2d442693cf848c050d700d43dc667afe9e5fd82b0570d667e"
+	libSize   = 2848768
+	libSHA256 = "66844f10251cc1c10619ed5d8e4e3224f564900ee6d69ba87d63de782addae40"
 )
 
 //go:embed assets/sdl_windows_amd64.gz

@@ -9,8 +9,8 @@ import _ "embed"
 const (
 	supported = true
 	libName   = "libSDL3.so.0"
-	libSize   = 2955440
-	libSHA256 = "f7be4bb053e1680bb44f62445eb4830f10f6f1fd0bf42c2e3fb9077931d30492"
+	libSize   = 2957864
+	libSHA256 = "5f76ad976429f909c2b1f75d2ab6502d26d785459bd98d3f61b7c9ba4cc7926c"
 )
 
 //go:embed assets/sdl_linux_arm64.gz

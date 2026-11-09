@@ -9,8 +9,8 @@ import _ "embed"
 const (
 	supported = true
 	libName   = "libSDL3.dylib"
-	libSize   = 2394272
-	libSHA256 = "af261ccfe98378d0377b3c1b700e1a82641ec23de140aaa3dd1266f9fb6a7fd0"
+	libSize   = 2412656
+	libSHA256 = "6c3cdf4b0bdeac8ffeb8dac250916b4111a5e0d5880258b3cb9a780b3fa5713b"
 )
 
 //go:embed assets/sdl_darwin_arm64.gz

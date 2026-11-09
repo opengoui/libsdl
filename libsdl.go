@@ -37,7 +37,7 @@ import (
 
 // Version is the upstream SDL release the embedded libraries were taken from
 // (the tag release-3.4.18 is "3.4.18"). It is maintained by tools/update.
-const Version = "3.4.18"
+const Version = "3.4.20"
 
 // Library describes the embedded shared library.
 type Library struct {
